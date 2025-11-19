@@ -1,15 +1,23 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
+import { type GameRoom, updateRoomState, getRoom, isHost } from '@/lib/gameRoom';
 
 type CellState = 'empty' | 'ship' | 'hit' | 'miss';
 type GamePhase = 'setup' | 'playing' | 'finished';
 
 const BOARD_SIZE = 10;
 
-const Battleship = () => {
+interface BattleshipProps {
+  room?: GameRoom;
+}
+
+const Battleship = ({ room }: BattleshipProps) => {
+  const isMultiplayer = !!room;
+  const playerIsHost = room ? isHost(room) : false;
+  
   const [phase, setPhase] = useState<GamePhase>('setup');
   const [playerBoard, setPlayerBoard] = useState<CellState[][]>(
     Array(BOARD_SIZE)
@@ -27,6 +35,31 @@ const Battleship = () => {
   const [winner, setWinner] = useState<'player' | 'enemy' | null>(null);
 
   const TOTAL_SHIPS = 10;
+
+  useEffect(() => {
+    if (!room) return;
+
+    const interval = setInterval(() => {
+      const updatedRoom = getRoom(room.id);
+      if (updatedRoom && updatedRoom.gameState) {
+        const state = updatedRoom.gameState;
+        if (playerIsHost) {
+          setPlayerBoard(state.hostBoard || playerBoard);
+          setEnemyBoard(state.guestBoard || enemyBoard);
+        } else {
+          setPlayerBoard(state.guestBoard || playerBoard);
+          setEnemyBoard(state.hostBoard || enemyBoard);
+        }
+        setCurrentTurn(updatedRoom.currentTurn === 'host' ? 'player' : 'enemy');
+        setPlayerHits(state.playerHits || 0);
+        setEnemyHits(state.enemyHits || 0);
+        setWinner(state.winner || null);
+        setPhase(state.phase || phase);
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [room, playerIsHost]);
 
   const placeRandomShips = (): CellState[][] => {
     const board: CellState[][] = Array(BOARD_SIZE)
@@ -112,6 +145,16 @@ const Battleship = () => {
     setEnemyHits(0);
     setCurrentTurn('player');
     setWinner(null);
+
+    if (room) {
+      updateRoomState(room.id, {
+        hostBoard: playerIsHost ? newPlayerBoard : newEnemyBoard,
+        guestBoard: playerIsHost ? newEnemyBoard : newPlayerBoard,
+        playerHits: 0,
+        enemyHits: 0,
+        phase: 'playing'
+      }, 'host');
+    }
   };
 
   const handlePlayerShot = (row: number, col: number) => {
@@ -130,12 +173,35 @@ const Battleship = () => {
       if (newHits >= TOTAL_SHIPS) {
         setWinner('player');
         setPhase('finished');
+        if (room) {
+          updateRoomState(room.id, {
+            hostBoard: playerIsHost ? playerBoard : newBoard,
+            guestBoard: playerIsHost ? newBoard : playerBoard,
+            playerHits: newHits,
+            enemyHits,
+            winner: 'player',
+            phase: 'finished'
+          }, 'guest');
+        }
         return;
       }
     }
 
+    if (room) {
+      const nextTurn = playerIsHost ? 'guest' : 'host';
+      updateRoomState(room.id, {
+        hostBoard: playerIsHost ? playerBoard : newBoard,
+        guestBoard: playerIsHost ? newBoard : playerBoard,
+        playerHits: playerHits + (isHit ? 1 : 0),
+        enemyHits,
+        phase: 'playing'
+      }, nextTurn);
+    }
+
     setCurrentTurn('enemy');
-    setTimeout(enemyTurn, 1000);
+    if (!isMultiplayer) {
+      setTimeout(enemyTurn, 1000);
+    }
   };
 
   const enemyTurn = () => {
@@ -212,7 +278,14 @@ const Battleship = () => {
   return (
     <Card className="max-w-6xl mx-auto">
       <CardHeader>
-        <CardTitle className="text-center">Морской бой</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle>Морской бой</CardTitle>
+          {isMultiplayer && (
+            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+              {playerIsHost ? 'Хозяин' : 'Гость'}
+            </Badge>
+          )}
+        </div>
         <CardDescription className="text-center">
           {phase === 'setup' && 'Нажмите "Начать игру" чтобы расставить корабли'}
           {phase === 'playing' && !winner && `Ход: ${currentTurn === 'player' ? 'Ваш' : 'Противник'}`}

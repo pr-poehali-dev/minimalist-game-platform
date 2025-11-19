@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { useToast } from '@/hooks/use-toast';
 import Icon from '@/components/ui/icon';
 import TicTacToe from '@/components/games/TicTacToe';
 import Connect4 from '@/components/games/Connect4';
 import Battleship from '@/components/games/Battleship';
+import { createRoom, joinRoom, getRoom, getRoomLink, type GameRoom } from '@/lib/gameRoom';
 
 type GameType = 'tictactoe' | 'connect4' | 'battleship' | 'checkers' | 'chess';
 
@@ -74,9 +77,85 @@ const leaderboard = [
 const Index = () => {
   const [activeTab, setActiveTab] = useState('games');
   const [selectedGame, setSelectedGame] = useState<GameType | null>(null);
+  const [currentRoom, setCurrentRoom] = useState<GameRoom | null>(null);
+  const [roomLink, setRoomLink] = useState<string>('');
+  const [joinRoomId, setJoinRoomId] = useState<string>('');
   const [userRating] = useState(1850);
   const [userGames] = useState(45);
   const [userWins] = useState(28);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomId = params.get('room');
+    
+    if (roomId) {
+      const room = getRoom(roomId);
+      if (room && room.status === 'waiting') {
+        const updatedRoom = joinRoom(roomId);
+        if (updatedRoom) {
+          setCurrentRoom(updatedRoom);
+          setSelectedGame(updatedRoom.gameType);
+          toast({
+            title: 'Подключено к игре!',
+            description: 'Ожидайте начала партии'
+          });
+        }
+      } else if (room && room.status === 'playing') {
+        setCurrentRoom(room);
+        setSelectedGame(room.gameType);
+      }
+    }
+  }, [toast]);
+
+  const handleCreateRoom = (gameType: 'tictactoe' | 'connect4' | 'battleship') => {
+    const room = createRoom(gameType);
+    const link = getRoomLink(room.id);
+    setCurrentRoom(room);
+    setRoomLink(link);
+    setSelectedGame(gameType);
+    toast({
+      title: 'Комната создана!',
+      description: 'Скопируйте ссылку и отправьте другу'
+    });
+  };
+
+  const handleCopyLink = () => {
+    if (roomLink) {
+      navigator.clipboard.writeText(roomLink);
+      toast({
+        title: 'Ссылка скопирована!',
+        description: 'Отправьте её другу для начала игры'
+      });
+    }
+  };
+
+  const handleJoinByCode = () => {
+    if (!joinRoomId.trim()) return;
+    
+    const room = joinRoom(joinRoomId.toUpperCase());
+    if (room) {
+      setCurrentRoom(room);
+      setSelectedGame(room.gameType);
+      toast({
+        title: 'Подключено!',
+        description: 'Игра начинается'
+      });
+    } else {
+      toast({
+        title: 'Ошибка',
+        description: 'Комната не найдена или уже занята',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const handleBackToGames = () => {
+    setSelectedGame(null);
+    setCurrentRoom(null);
+    setRoomLink('');
+    setJoinRoomId('');
+  };
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -187,29 +266,119 @@ const Index = () => {
               ))}
             </div>
 
-            {selectedGame && (
+            {selectedGame && !currentRoom && (
+              <div className="mt-12 max-w-2xl mx-auto animate-scale-in">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Создать игру</CardTitle>
+                    <CardDescription>Выберите режим игры</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <Button 
+                      className="w-full justify-start" 
+                      size="lg"
+                      onClick={() => handleCreateRoom(selectedGame as 'tictactoe' | 'connect4' | 'battleship')}
+                    >
+                      <Icon name="Link" size={20} className="mr-3" />
+                      Играть с другом по ссылке
+                    </Button>
+                    
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t border-border" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-card px-2 text-muted-foreground">или</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Присоединиться по коду</label>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Введите код комнаты"
+                          value={joinRoomId}
+                          onChange={(e) => setJoinRoomId(e.target.value.toUpperCase())}
+                          className="uppercase"
+                          maxLength={6}
+                        />
+                        <Button onClick={handleJoinByCode} disabled={!joinRoomId.trim()}>
+                          Войти
+                        </Button>
+                      </div>
+                    </div>
+
+                    <Button
+                      className="w-full justify-start"
+                      size="lg"
+                      variant="outline"
+                      onClick={handleBackToGames}
+                    >
+                      <Icon name="X" size={20} className="mr-3" />
+                      Отмена
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {selectedGame && currentRoom && currentRoom.status === 'waiting' && (
+              <div className="mt-12 max-w-2xl mx-auto animate-scale-in">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-center">Ожидание второго игрока</CardTitle>
+                    <CardDescription className="text-center">
+                      Скопируйте ссылку и отправьте другу
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="text-center">
+                      <div className="inline-flex items-center gap-2 px-6 py-3 bg-primary/10 rounded-lg">
+                        <Icon name="Hash" size={20} className="text-primary" />
+                        <span className="text-3xl font-bold tracking-wider text-primary">{currentRoom.id}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-2">Код комнаты</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <Input
+                          value={roomLink}
+                          readOnly
+                          className="font-mono text-sm"
+                        />
+                        <Button onClick={handleCopyLink}>
+                          <Icon name="Copy" size={16} className="mr-2" />
+                          Копировать
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                      <span>Ожидание подключения...</span>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleBackToGames}
+                    >
+                      <Icon name="X" size={20} className="mr-2" />
+                      Отменить игру
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {selectedGame && currentRoom && currentRoom.status === 'playing' && (
               <div className="mt-12 mx-auto animate-scale-in">
-                {selectedGame === 'tictactoe' && <TicTacToe />}
-                {selectedGame === 'connect4' && <Connect4 />}
-                {selectedGame === 'battleship' && <Battleship />}
-                {(selectedGame === 'checkers' || selectedGame === 'chess') && (
-                  <Card className="max-w-2xl mx-auto">
-                    <CardHeader>
-                      <CardTitle className="text-center">Скоро появится</CardTitle>
-                      <CardDescription className="text-center">
-                        Эта игра находится в разработке
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Button onClick={() => setSelectedGame(null)} className="w-full" size="lg">
-                        <Icon name="ArrowLeft" size={20} className="mr-2" />
-                        Вернуться к играм
-                      </Button>
-                    </CardContent>
-                  </Card>
-                )}
+                {selectedGame === 'tictactoe' && <TicTacToe room={currentRoom} />}
+                {selectedGame === 'connect4' && <Connect4 room={currentRoom} />}
+                {selectedGame === 'battleship' && <Battleship room={currentRoom} />}
                 <div className="text-center mt-6">
-                  <Button onClick={() => setSelectedGame(null)} variant="ghost">
+                  <Button onClick={handleBackToGames} variant="ghost">
                     <Icon name="ArrowLeft" size={20} className="mr-2" />
                     Вернуться к выбору игр
                   </Button>
